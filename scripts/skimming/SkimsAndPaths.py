@@ -47,14 +47,14 @@ else:
     daysim_seed_trips= False
 
 if survey_seed_trips:
-	print 'Using SURVEY SEED TRIPS.'
-	hdf5_file_path = base_inputs + '/' + scenario_name + '/etc/survey_seed_trips.h5'
+    print 'Using SURVEY SEED TRIPS.'
+    hdf5_file_path = base_inputs + '/' + scenario_name + '/etc/survey_seed_trips.h5'
 elif daysim_seed_trips:
-	print 'Using DAYSIM OUTPUT SEED TRIPS'
-	hdf5_file_path = 'inputs/etc/daysim_outputs_seed_trips.h5'
+    print 'Using DAYSIM OUTPUT SEED TRIPS'
+    hdf5_file_path = 'inputs/etc/daysim_outputs_seed_trips.h5'
 else:
-	print 'Using DAYSIM OUTPUTS'
-	hdf5_file_path = 'outputs/daysim_outputs.h5'
+    print 'Using DAYSIM OUTPUTS'
+    hdf5_file_path = 'outputs/daysim_outputs.h5'
 
 
 def parse_args():
@@ -164,7 +164,8 @@ def define_matrices(my_project):
 
     for x in range (0, len(my_skim_matrix_designation)):
             for y in range (0, len(matrix_dict["Highway"])):
-                my_project.create_matrix(matrix_dict["Highway"][y]["Name"]+my_skim_matrix_designation[x], 
+                if 'prs' not in matrix_dict["Highway"][y]["Name"]:
+                    my_project.create_matrix(matrix_dict["Highway"][y]["Name"]+my_skim_matrix_designation[x], 
                                           matrix_dict["Highway"][y]["Description"], "FULL")
                    
     #Create Generalized Cost Skims matrices for only for tod in generalized_cost_tod
@@ -272,7 +273,8 @@ def intitial_extra_attributes(my_project):
 
     # Create the link extra attributes to store volume results
     for x in range (0, len(matrix_dict["Highway"])):
-        my_project.create_extra_attribute("LINK", "@"+matrix_dict["Highway"][x]["Name"], matrix_dict["Highway"][x]["Description"], True)
+        if 'prs' not in matrix_dict["Highway"][x]["Name"]:
+            my_project.create_extra_attribute("LINK", "@"+matrix_dict["Highway"][x]["Name"], matrix_dict["Highway"][x]["Description"], True)
                      
 
     # Create the link extra attributes to store the auto equivalent of bus vehicles
@@ -300,7 +302,19 @@ def traffic_assignment(my_project):
     #Load in the necessary Dictionaries
     assignment_specification = json_to_dictionary("general_path_based_assignment")
     my_user_classes= json_to_dictionary("user_classes")
-
+    prs_auto_ar = json_to_dictionary("prs_auto_map")    
+    prs_auto_map = {prs.get('Name'):prs.get('Auto') for prs in prs_auto_ar}
+    
+    # Add PRS trips to Auto trips
+    logging.debug('Adding PRS trips to Auto trips')
+    for prs_mat_name, auto_mat_name in prs_auto_map.iteritems():
+        prs_mat_id = my_project.bank.matrix(prs_mat_name).id
+        auto_mat_id = my_project.bank.matrix(auto_mat_name).id
+        my_project.matrix_calculator(result = auto_mat_id,
+                                     expression = prs_mat_id + ' + ' + auto_mat_id)
+    logging.debug('Finished adding PRS trips to Auto trips')
+    
+    
     # Modify the Assignment Specifications for the Closure Criteria and Perception Factors
     mod_assign = assignment_specification
     #max_num_iterations = parse_args()
@@ -308,6 +322,8 @@ def traffic_assignment(my_project):
     mod_assign["stopping_criteria"]["best_relative_gap"]= best_relative_gap 
     mod_assign["stopping_criteria"]["relative_gap"]= relative_gap
     mod_assign["stopping_criteria"]["normalized_gap"]= normalized_gap
+              
+    
 
     for x in range (0, len(mod_assign["classes"])):
         vot = ((1/float(my_user_classes["Highway"][x]["Value of Time"]))*60)
@@ -315,6 +331,7 @@ def traffic_assignment(my_project):
         mod_assign["classes"][x]["generalized_cost"]["link_costs"] = my_user_classes["Highway"][x]["Toll"]
         mod_assign["classes"][x]["demand"] = "mf"+ my_user_classes["Highway"][x]["Name"]
         mod_assign["classes"][x]["mode"] = my_user_classes["Highway"][x]["Mode"]
+        print 'Assigning: '+my_user_classes["Highway"][x]['Name']+'-'+mod_assign["classes"][x]["demand"] #Debugging statement by aditya.gore@rsginc.com
 
 
     assign_extras(el1 = "@rdly", el2 = "@trnv3")
@@ -407,6 +424,7 @@ def attribute_based_skims(my_project,my_skim_attribute):
         if tod in generalized_cost_tod and skim_desig == 't':
             if my_user_classes["Highway"][x]["Name"] in gc_skims.values():
                 mod_skim["classes"][x]["results"]["od_travel_times"]["shortest_paths"] = my_user_classes["Highway"][x]["Name"] + 'g'
+        print 'Skims: '+my_user_classes["Highway"][x]['Name']+'-'+matrix_name #Debugging statement by aditya.gore@rsginc.com
         #otherwise, make sure we do not skim for GC!
        
     skim_traffic(mod_skim)
@@ -417,6 +435,7 @@ def attribute_based_skims(my_project,my_skim_attribute):
     inzone_distance = my_project.bank.matrix(intrazonal_dict['distance']).id
     if my_skim_attribute =="Time":
         for x in range (0, len(mod_skim["classes"])):
+            print my_user_classes["Highway"][x]["Name"]+skim_desig #Debugging statement by aditya.gore@rsginc.com
             matrix_name= my_user_classes["Highway"][x]["Name"]+skim_desig
             matrix_id = my_project.bank.matrix(matrix_name).id
             my_project.matrix_calculator(result = matrix_id, expression = inzone_auto_time + "+" + inzone_terminal_time +  "+" + matrix_id)
@@ -425,6 +444,7 @@ def attribute_based_skims(my_project,my_skim_attribute):
     if my_project.tod in generalized_cost_tod and skim_desig == 't': 
         for value in gc_skims.values():
            matrix_name = value + 'g'
+           #print matrix_name #Debugging statement by aditya.gore@rsginc.com
            matrix_id = my_project.bank.matrix(matrix_name).id
            my_project.matrix_calculator(result = matrix_id, expression = inzone_auto_time + "+" + inzone_terminal_time +  "+" + matrix_id)      
 
@@ -465,6 +485,7 @@ def attribute_based_toll_cost_skims(my_project, toll_attribute):
         if my_user_classes["Highway"][x][my_skim_attribute] == toll_attribute:
             my_extra = my_user_classes["Highway"][x][my_skim_attribute]
             matrix_name= my_user_classes["Highway"][x]["Name"]+skim_desig
+            #print matrix_name #Debugging statement by aditya.gore@rsginc.com
             matrix_id = my_bank.matrix(matrix_name).id
             mod_skim["classes"][x]["analysis"]["results"]["od_values"] = matrix_id
             mod_skim["path_analysis"]["link_component"] = my_extra
@@ -602,20 +623,21 @@ def average_skims_to_hdf5_concurrent(my_project, average_skims):
     for x in range (0, len(my_skim_matrix_designation)):
 
         for y in range (0, len(matrix_dict["Highway"])):
-            matrix_name= matrix_dict["Highway"][y]["Name"]+my_skim_matrix_designation[x]
-            if my_skim_matrix_designation[x] == 'c':
-                matrix_value = emmeMatrix_to_numpyMatrix(matrix_name, my_project.bank, 'uint16', 1, 99999)
-            elif my_skim_matrix_designation[x] == 'd':
-                matrix_value = emmeMatrix_to_numpyMatrix(matrix_name, my_project.bank, 'uint16', 100, 2000)
-            else:
-                matrix_value = emmeMatrix_to_numpyMatrix(matrix_name, my_project.bank, 'uint16', 100, 2000)  
-            #open old skim and average
-            print matrix_name
-            if average_skims:
-                matrix_value = average_matrices(np_old_matrices[matrix_name], matrix_value)
-            #delete old skim so new one can be written out to h5 container
-            my_store["Skims"].create_dataset(matrix_name, data=matrix_value.astype('uint16'),compression='gzip')
-            print matrix_name+' was transferred to the HDF5 container.'
+            if 'prs' not in matrix_dict["Highway"][y]["Name"]:
+                matrix_name= matrix_dict["Highway"][y]["Name"]+my_skim_matrix_designation[x]
+                if my_skim_matrix_designation[x] == 'c':
+                    matrix_value = emmeMatrix_to_numpyMatrix(matrix_name, my_project.bank, 'uint16', 1, 99999)
+                elif my_skim_matrix_designation[x] == 'd':
+                    matrix_value = emmeMatrix_to_numpyMatrix(matrix_name, my_project.bank, 'uint16', 100, 2000)
+                else:
+                    matrix_value = emmeMatrix_to_numpyMatrix(matrix_name, my_project.bank, 'uint16', 100, 2000)  
+                #open old skim and average
+                #print matrix_name
+                if average_skims:
+                    matrix_value = average_matrices(np_old_matrices[matrix_name], matrix_value)
+                #delete old skim so new one can be written out to h5 container
+                my_store["Skims"].create_dataset(matrix_name, data=matrix_value.astype('uint16'),compression='gzip')
+                print matrix_name+' was transferred to the HDF5 container.'
 
     #transit
     if my_project.tod in transit_skim_tod:
@@ -709,8 +731,12 @@ def hdf5_trips_to_Emme(my_project, hdf_filename):
 
     #Read the Matrix File from the Dictionary File and Set Unique Matrix Names
     matrix_dict = text_to_dictionary('demand_matrix_dictionary')
-    uniqueMatrices = set(matrix_dict.values())
-
+    uniqueMatrices = set(matrix_dict.values())    
+    prs_auto_ar = json_to_dictionary("prs_auto_map")
+    
+    prs_frac_assign = {prs.get('Name'):prs.get('FracToAssign') for prs in prs_auto_ar}
+    prs_auto_map = {prs.get('Name'):prs.get('Auto') for prs in prs_auto_ar}
+    
     #Stores in the HDF5 Container to read or write to
     daysim_set = my_store['Trip']
 
@@ -765,7 +791,7 @@ def hdf5_trips_to_Emme(my_project, hdf_filename):
     # Create empty demand matrices for other modes without supplemental trips
     for matrix in list(uniqueMatrices):
         if matrix not in demand_matrices.keys():
-            demand_matrix = np.zeros((zonesDim,zonesDim), np.float16)
+            demand_matrix = np.zeros((zonesDim,zonesDim), np.float64)
             demand_matrices.update({matrix : demand_matrix})
 
     #Start going through each trip & assign it to the correct Matrix. Using Otaz, but array length should be same for all
@@ -813,18 +839,31 @@ def hdf5_trips_to_Emme(my_project, hdf_filename):
                     trips = np.asscalar(np.float32(trexpfac[x]))
                     trips = round(trips, 2)
                     demand_matrices[mat_name][myOtaz, myDtaz] = demand_matrices[mat_name][myOtaz, myDtaz] + trips
-  
+            if mode[x] == 9:
+                # Paid ride share
+                if dorp[x] > 10 and dorp[x] < 14:
+                    mat_name_prs = matrix_dict[(int(dorp[x]+1),int(vot[x]),int(toll_path[x]))]
+                    myOtaz = dictZoneLookup[otaz[x]]
+                    myDtaz = dictZoneLookup[dtaz[x]]
+                    #add the trip, if it's not in a special generator location
+                    trips = np.asscalar(np.float32(trexpfac[x]))*prs_frac_assign.get(mat_name_prs)
+                    trips = round(trips, 2)
+                    text = 'TOD: {}, Mode Name: {}, Trips: {}'.format(my_project.tod, mat_name_prs, trips)
+                    print(text) #Debugging statement by aditya.gore@rsginc.com
+                    logging.debug(text)
+                    demand_matrices[mat_name_prs][myOtaz, myDtaz] = demand_matrices[mat_name_prs][myOtaz, myDtaz] + trips
   #all in-memory numpy matrices populated, now write out to emme
     if survey_seed_trips:
         for matrix in demand_matrices.itervalues():
             matrix = matrix.astype(np.uint16)
     for mat_name in uniqueMatrices:
-        print mat_name
         matrix_id = my_project.bank.matrix(str(mat_name)).id
+        print mat_name+' '+matrix_id
         np_array = demand_matrices[mat_name]
         emme_matrix = ematrix.MatrixData(indices=[zones,zones],type='f')
-        print mat_name
-        print np_array.shape
+        text = 'TOD: {}, Name: {}, Shape: {}, Sum: {}'.format(my_project.tod, mat_name, np_array.shape, np_array.sum())
+        print(text) #Debugging statement by aditya.gore@rsginc.com
+        logging.debug(text)
         emme_matrix.from_numpy(np_array)
         my_project.bank.matrix(matrix_id).set_data(emme_matrix, my_project.current_scenario)
     
@@ -836,7 +875,7 @@ def hdf5_trips_to_Emme(my_project, hdf_filename):
 
 def load_trucks_external(my_project, matrix_name, zonesDim):
 
-    demand_matrix = np.zeros((zonesDim,zonesDim), np.float16)
+    demand_matrix = np.zeros((zonesDim,zonesDim), np.float64)
     hdf_file = h5py.File(hdf_auto_filename, "r")
     tod = my_project.tod
 
@@ -887,7 +926,7 @@ def load_supplemental_trips(my_project, matrix_name, zonesDim):
 
     tod = my_project.tod
     # Create empty array to fill with trips
-    demand_matrix = np.zeros((zonesDim,zonesDim), np.float16)
+    demand_matrix = np.zeros((zonesDim,zonesDim), np.float64)
     hdf_file = h5py.File(supplemental_loc + tod + '.h5', "r")
     # Call correct mode name by removing income class value when needed
     if matrix_name not in ['bike', 'trnst', 'walk']:
@@ -1000,7 +1039,7 @@ def run_transit(project_name):
 
     #Calc Wait Times
     app.App.refresh_data
-    matrix_calculator = json_to_dictionary("matrix_calculation")
+    matrix_calculator = json_to_dictionary("matrix_calc_spec")
     matrix_calc = m.tool("inro.emme.matrix_calculation.matrix_calculator")
 
     #Hard coded for now, generalize later
@@ -1153,35 +1192,36 @@ def feedback_check(emmebank_path_list):
         for y in range (0, len(matrix_dict["Highway"])):
            #trips
             matrix_name= matrix_dict["Highway"][y]["Name"]
-            matrix_value = emmeMatrix_to_numpyMatrix(matrix_name, my_bank, 'float32', 1)
-            
-            trips = np.where(matrix_value > np.iinfo('uint16').max, np.iinfo('uint16').max, matrix_value)
-            print 'trips'
-            print trips[563,547]
-            
-            #new skims
-            matrix_name = matrix_name + 't'
-            matrix_value = emmeMatrix_to_numpyMatrix(matrix_name, my_bank, 'float32', 100)
-            new_skim = np.where(matrix_value > np.iinfo('uint16').max, np.iinfo('uint16').max, matrix_value)
-            
-            print matrix_name
-            print 'new_skim'
-            print new_skim[563,547]
-            
-            #now old skims
-            old_skim = np.asmatrix(my_store['Skims'][matrix_name])
-            print 'old_skim'
-            print old_skim[563,547]
-          
-
-            change_test=np.sum(np.multiply(np.absolute(new_skim-old_skim),trips))/np.sum(np.multiply(old_skim,trips))
-            print 'test value'
-            print change_test
-            text = tod + " " + str(change_test) + " " + matrix_name
-            logging.debug(text)
-            if change_test > STOP_THRESHOLD:
-                passed = False
-                break
+            if 'prs' not in matrix_name:
+                matrix_value = emmeMatrix_to_numpyMatrix(matrix_name, my_bank, 'float32', 1)
+                
+                trips = np.where(matrix_value > np.iinfo('uint16').max, np.iinfo('uint16').max, matrix_value)
+                print 'trips'
+                print trips[563,547]
+                
+                #new skims
+                matrix_name = matrix_name + 't'
+                matrix_value = emmeMatrix_to_numpyMatrix(matrix_name, my_bank, 'float32', 100)
+                new_skim = np.where(matrix_value > np.iinfo('uint16').max, np.iinfo('uint16').max, matrix_value)
+                
+                print matrix_name
+                print 'new_skim'
+                print new_skim[563,547]
+                
+                #now old skims
+                old_skim = np.asmatrix(my_store['Skims'][matrix_name])
+                print 'old_skim'
+                print old_skim[563,547]
+              
+    
+                change_test=np.sum(np.multiply(np.absolute(new_skim-old_skim),trips))/np.sum(np.multiply(old_skim,trips))
+                print 'test value'
+                print change_test
+                text = tod + " " + str(change_test) + " " + matrix_name
+                logging.debug(text)
+                if change_test > STOP_THRESHOLD:
+                    passed = False
+                    break
 
         my_bank.dispose()
      return passed
@@ -1229,32 +1269,35 @@ def delete_matrices_parallel(project_name):
     delete_matrices(my_project, "DESTINATION")
 
 #save highway assignment results for sensitivity tests
-def store_assign_results(project_name):
+def store_assign_results(project_name, prefix=''):
     print('save assignment results')
     tod = project_name.tod
     network = project_name.current_scenario.get_network()
     
-    #empty list to save link data
-    link_data = []
+    link_attr = ['link_id']
+    my_user_classes = json_to_dictionary('user_classes')
+    mod_skim = json_to_dictionary("general_path_based_volume")
+    for x in range(0, len(mod_skim["classes"])):
+        link_attr.append( "@" + my_user_classes["Highway"][x]["Name"])
     
-    #go through each link and store data
-    for link in network.links():
-        #print(link.id)
-        link_data.append({'link_id': link.id,
-                          'length': link.length,
-                          'from_node': link.i_node,
-                          'to_node': link.j_node,
-                          'vol_auto': link.auto_volume,
-                          'time_auto': link.auto_time})
-    #convert to dataframe
-    link_data_df = pd.DataFrame(link_data, columns = link_data[0].keys())
-	
+    #empty list to save link data
+    link_attr.extend(['length', 'auto_volume', 'auto_time', 'data1', 'data2', 
+    '@bvol', '@bkwt', '@ovol', '@trnv', '@trnv3', 'additional_volume'])
+    link_all_attr = network.attributes('LINK')
+    link_attr = [attr for attr in link_attr if attr in link_all_attr]
+    
+    
+    attr_ls = network.get_attribute_values('LINK', link_attr[1:])[1:]
+    link_data_df = reduce((lambda df1, df2: pd.merge(df1,df2,how='outer',on='nodes')),
+                     [pd.DataFrame({'nodes':attr.keys(), 'values':attr.values()}) for attr in attr_ls])
+    link_data_df.columns = link_attr
+    
     #make a directory in outputs folder
     if not os.path.exists(os.path.join(project_folder, 'outputs', 'iter'+str(iteration))):
         os.makedirs(os.path.join(project_folder, 'outputs', 'iter'+str(iteration)))
     
     #write out hwy assignment results    
-    file_path = os.path.join(project_folder, 'outputs', 'iter'+str(iteration), 'hwyload_' + tod + '.csv')
+    file_path = os.path.join(project_folder, 'outputs', 'iter'+str(iteration), 'hwyload_' + tod + '_'+prefix+ '.csv')
     link_data_df.to_csv(file_path, index = False)
 
 def run_assignments_parallel(project_name):
@@ -1296,14 +1339,15 @@ def run_assignments_parallel(project_name):
     
     ##run auto assignment/skims
     traffic_assignment(my_project)
-    
-    #save results
-    #store_assign_results(my_project)
    
     attribute_based_skims(my_project, "Time")
+    
+    store_assign_results(my_project, prefix = 'traffic_assignment')
 
     ###bike/walk:
     bike_walk_assignment(my_project, 'false')
+    
+    store_assign_results(my_project, prefix = 'bike_walk_assignment')
     
     ###Only skim for distance if in global distance_skim_tod list
     if my_project.tod in distance_skim_tod:
@@ -1314,6 +1358,9 @@ def run_assignments_parallel(project_name):
     attribute_based_toll_cost_skims(my_project, "@toll2")
     attribute_based_toll_cost_skims(my_project, "@toll3")
     class_specific_volumes(my_project)
+    
+    #save results
+    store_assign_results(my_project, 'skim')
 
     ##dispose emmebank
     my_project.bank.dispose()
